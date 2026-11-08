@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterable
+import logging
 
 from homeassistant.components.stt import (
     AudioBitRates,
@@ -24,7 +24,8 @@ from .agent import WhistleAssistManager, async_transcribe
 from .const import DOMAIN, SUPPORTED_LANGUAGES
 
 _LOGGER = logging.getLogger(__name__)
-MAX_AUDIO_BYTES = 150 * 1024 * 1024
+# 16 kHz * 2 bytes * 120 s
+MAX_AUDIO_BYTES = 16000 * 2 * 120
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
@@ -34,13 +35,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
 
 class WhistleSpeechToTextEntity(SpeechToTextEntity):
-    """Transcribe 16 kHz mono WAV/PCM using Whistle locally."""
+    """Transcribe 16 kHz mono PCM locally with Whistle."""
 
     _attr_name = "Whistle"
 
     def __init__(self, manager: WhistleAssistManager, entry: ConfigEntry) -> None:
         self.manager = manager
         self._attr_unique_id = f"{entry.entry_id}_stt"
+        self._attr_device_info = {"identifiers": {(DOMAIN, entry.entry_id)}}
 
     @property
     def supported_languages(self) -> list[str]:
@@ -69,39 +71,28 @@ class WhistleSpeechToTextEntity(SpeechToTextEntity):
     async def async_process_audio_stream(
         self, metadata: SpeechMetadata, stream: AsyncIterable[bytes]
     ) -> SpeechResult:
-        """Stream audio into memory and invoke Whistle off the event loop."""
+        """Collect the audio and run Whistle off the event loop."""
         audio = bytearray()
         try:
             async for chunk in stream:
                 audio.extend(chunk)
                 if len(audio) > MAX_AUDIO_BYTES:
-                    _LOGGER.error("Whistle input exceeded the %s MiB audio limit", MAX_AUDIO_BYTES // (1024 * 1024))
-                    return SpeechResult(None, SpeechResultState.ERROR)
-
+                    _LOGGER.warning("Whistle input longer than 120 s, truncating")
+                    break
             if not audio:
                 return SpeechResult(None, SpeechResultState.ERROR)
 
-            configured_language = self.manager.language
-            if configured_language != "auto":
-                language = configured_language
-            else:
+            language = self.manager.language
+            if language == "auto":
                 language = (metadata.language or "").lower().split("-", maxsplit=1)[0]
                 if language not in SUPPORTED_LANGUAGES:
-                    language = ""
+                    language = None
             transcript = await async_transcribe(
-                self.hass,
-                bytes(audio),
-                language or None,
-                sample_rate=int(metadata.sample_rate),
-                channels=int(metadata.channel),
-                sample_width=int(metadata.bit_rate) // 8,
+                self.manager, bytes(audio), language, channels=int(metadata.channel)
             )
-
-            # Whistle intentionally returns an empty transcript for silence.
-            return SpeechResult(
-                transcript or None,
-                SpeechResultState.SUCCESS,
-            )
+            _LOGGER.debug("Whistle transcript: %r", transcript)
+            # Whistle returns an empty transcript for silence.
+            return SpeechResult(transcript or None, SpeechResultState.SUCCESS)
         except Exception:
             _LOGGER.exception("Whistle transcription failed")
             return SpeechResult(None, SpeechResultState.ERROR)

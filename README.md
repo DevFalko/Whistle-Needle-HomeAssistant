@@ -3,42 +3,43 @@
 [![Hassfest](https://github.com/pindapandatv-wq/Whistle-Needle-HomeAssistant/actions/workflows/validate.yaml/badge.svg)](https://github.com/pindapandatv-wq/Whistle-Needle-HomeAssistant/actions/workflows/validate.yaml)
 
 
-## AI use disclosure
-Vibecoded in a few minutes, because it seems simple enough, but mashing two things I never built together is always a chore.
-And for chores, we have AI.
+## Fork status (v0.2.0)
 
-I checked the code, looks good. If you trust the engine and the model, this should be ok.
+This fork rebuilds the integration after it failed on a real Home Assistant 2026.10 install:
+
+- **`needle_init failed` fixed.** v0.1 put every exposed entity into the tool schemas. On a home with ~180 exposed entities that overflowed Needle 3's 4096-token prompt. Needle now gets **five fixed tools** (`control_device`, `set_level`, `get_state`, `activate_scene`, `control_media`). Only area names go into an enum. Device names are copied from the request and resolved to entities by a fuzzy matcher in the integration (`matcher.py`), which handles German compounds, umlauts, small STT errors, room groups and ambiguity.
+- **Options dialog (HTTP 500) fixed.** The options flow no longer assigns `config_entry` itself, which raises on current Home Assistant.
+- **Chaining: local first, cloud only when needed.**
+  1. Home Assistant's own sentences/intents (exact, instant), optional.
+  2. Needle on this machine for device commands and status questions.
+  3. Anything Needle does not handle (no tool chosen, unknown device, low confidence) goes to a **fallback conversation agent** you pick in the options, e.g. Anthropic (Claude, optionally with web search), OpenAI or Ollama. Follow-ups keep the fallback agent's own conversation.
+- **Whistle STT** now feeds samples directly (no temp WAV files), biases recognition towards your room and device names (`keywords`), and shares one lock with Needle because the engine is not thread-safe.
+- **Model preloading** at startup, so the first command does not wait for the download.
+- **Tests** against a real Home Assistant core (`pytest-homeassistant-custom-component`), see [Development](#development-and-checks).
 
 ## Intro
 
 An experimental Home Assistant custom integration connecting Cactus Compute's local Whistle speech recognition and Needle tool-calling model to Home Assistant Assist.
 
-- **Whistle speech-to-text entity:** `Whistle`, selectable in an Assist pipeline.
-- **Conversation agent:** `Whistle Assist`, which maps natural-language requests to a fixed set of Home Assistant tools.
-- **Entity-aware:** discovers live entities exposed to Home Assistant's `conversation` assistant, with friendly names and area context.
-- **Constrained control:** uses explicit per-domain action schemas and validates targets and values again before making Home Assistant service calls. It does not expose an arbitrary service-call tool.
-- **Local inference:** speech recognition and tool selection run locally after model weights are available. First use may download model assets through the upstream Cactus package.
-- **Privacy default:** Needle telemetry is opted out by default with `NEEDLE_TELEMETRY=0` and `DO_NOT_TRACK=1` unless either variable is explicitly configured by the Home Assistant operator. See [Telemetry](#telemetry).
+- **Whistle speech-to-text entity:** `Whistle`, selectable in an Assist pipeline (en, de, fr, es, it, nl, pl).
+- **Conversation agent:** `Whistle Assist`, which runs the chain above.
+- **Entity-aware:** only entities exposed to Home Assistant's `conversation` assistant are considered.
+- **Constrained control:** a fixed allowlist of actions per domain, values are range-checked before any service call. There is no arbitrary service-call tool.
+- **Privacy default:** Needle telemetry is opted out by default with `NEEDLE_TELEMETRY=0` and `DO_NOT_TRACK=1` unless either variable is explicitly configured. See [Telemetry](#telemetry). Requests only leave the house when they reach the fallback agent you configured.
 
-> **Experimental software.** This integration has not been verified against a live Home Assistant installation as part of this repository preparation. Review the security notes, back up Home Assistant, and test on a non-critical installation before allowing voice-driven device control.
+> **Experimental software.** Back up Home Assistant and test on a non-critical installation before allowing voice-driven device control. Do not expose security-relevant switches (locks, alarm, DNS filters, ...) to Assist.
 
 ## Features
 
-| Domain | Supported operations |
+| Tool | What it does |
 | --- | --- |
-| Lights | On/off/toggle, brightness, white colour temperature, area-based light control |
-| Switches and input booleans | On/off/toggle |
-| Covers | Open/close/stop/set position |
-| Climate | On/off, target temperature, supported HVAC mode |
-| Fans | On/off/toggle/set percentage |
-| Media players | On/off, play/pause/stop, volume, mute |
-| Vacuums | Start/pause/stop/return to base/locate |
-| Humidifiers and water heaters | Supported on/off, temperature, humidity and mode actions |
-| Helpers | Set numeric, select and text helper values |
-| Scenes and scripts | Activate scene; scripts always require a separate confirmation |
-| Read-only status | State and selected attributes for exposed sensors, binary sensors, and other supported entities |
+| `control_device` | On/off/toggle lights, switches, fans, heating, media players, humidifiers; open/close/stop covers; start/dock vacuums. "Licht im Wohnzimmer" uses a room-named light group if one exists, otherwise all lights in the room. |
+| `set_level` | Brightness %, target temperature (checked against `min_temp`/`max_temp`), cover position %, volume %, fan speed % |
+| `get_state` | State of a device or sensor, with unit; for a group, which members are on |
+| `activate_scene` | Activate a scene by name |
+| `control_media` | Play, pause, next, previous, mute, unmute |
 
-Locks, alarm panels, sirens, buttons, automations, and other potentially sensitive or unsupported entities are not given actuation tools in this version. If an entity is not exposed to the `conversation` assistant in Home Assistant, it is not available to Whistle Assist.
+Scripts, locks, alarm panels and buttons are never actuated by Needle. Requests like that go to Home Assistant's intents or to the fallback agent.
 
 ## Installation
 
@@ -56,7 +57,7 @@ This repository is not automatically included in the HACS default catalog. Once 
 2. Copy `custom_components/whistle_assist/` from this repository into `<config>/custom_components/whistle_assist/`.
 3. Restart Home Assistant.
 4. Go to **Settings → Devices & services → Add integration**, and add **Whistle Assist**.
-5. Set a language (or automatic detection) and the confidence threshold in the integration configuration.
+5. Set the language, the confidence threshold and (optionally) the fallback agent. The fallback agent has to be set up first as its own integration (e.g. Anthropic or OpenAI Conversation).
 6. Go to **Settings → Voice assistants** and select `Whistle` as the speech-to-text engine and `Whistle Assist` as the conversation agent. Choose a text-to-speech engine separately if you want spoken output.
 7. In Home Assistant's voice-assistant entity exposure settings, expose only the entities that you intend Whistle Assist to read/control.
 
@@ -76,9 +77,11 @@ No transcript, device state or command is intentionally sent by this adapter to 
 
 - Expose entities deliberately. The agent only considers entities exposed to Home Assistant Assist and re-checks exposure before execution.
 - The tool definitions use an explicit action allowlist. Argument values, domains, current options/modes, and numeric ranges are validated before a service call.
-- Low-confidence or unavailable-confidence mutating requests require a separate confirmation. Script execution always requires confirmation. Pending confirmations expire after 60 seconds.
+- Requests below the confidence threshold, with an unknown device, or with an ambiguous match (the same partial name in several rooms) are never executed locally. They go to the fallback agent, or the agent answers that it cannot handle them.
+- Saying only a room ("mach das Büro aus") acts only on an entity named exactly like the room (a light group), never on every switch in that room.
+- The fallback agent has its own rules for device control (for cloud LLMs: the Assist API and the exposed entities). What reaches it leaves your network.
 - A successful service call means Home Assistant accepted the request; it does not prove the physical device completed the action.
-- Needle is optimized for structured tool calling, not general-purpose conversation. It can fail to map ambiguous requests; say the room and device name.
+- Needle is optimized for structured tool calling, not general-purpose conversation. The Cactus team says Needle 3 handles German, French, Spanish, Dutch, Italian and Polish besides English, but there is no published multilingual benchmark. Say the room and device name.
 - This build advertises 16 kHz mono PCM/WAV input. Whistle's advertised languages are English, German, French, Spanish, Italian, Dutch, and Polish.
 - API compatibility depends on the Home Assistant version and `cactus-needle` runtime. Test the STT and conversation pipeline after upgrades.
 
@@ -91,7 +94,11 @@ Run the repository checks locally:
 ```sh
 python scripts/validate_repo.py
 python -m compileall -q custom_components/whistle_assist
+# Home Assistant itself needs Linux; on Windows run the tests in WSL:
+bash scripts/run_tests_wsl.sh tests
 ```
+
+The tests replace `needle` with a fake, so they never download models.
 
 GitHub Actions runs the local contract checks, Home Assistant Hassfest validation, and HACS integration validation on pushes and pull requests. These checks validate repository structure and metadata; they are not a substitute for testing with a live Home Assistant instance and actual devices.
 

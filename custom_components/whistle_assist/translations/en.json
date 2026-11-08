@@ -3,10 +3,18 @@
     "step": {
       "user": {
         "title": "Whistle Assist",
-        "description": "Local speech recognition with Whistle and Home Assistant device actions with Needle.",
+        "description": "Local speech recognition (Whistle) and device control (Needle). Requests Needle cannot handle can be passed on to another conversation agent.",
         "data": {
-          "language": "Whistle language (used to override automatic language selection)",
-          "confidence_threshold": "Minimum Needle confidence to execute actions without confirmation (0–1)"
+          "language": "Speech language",
+          "confidence_threshold": "Minimum Needle confidence for local execution",
+          "use_ha_intents": "Try Home Assistant's built-in sentences first",
+          "fallback_agent": "Fallback conversation agent (e.g. Claude or OpenAI) for everything Needle cannot handle",
+          "preload_models": "Download and load the models at startup"
+        },
+        "data_description": {
+          "confidence_threshold": "Below this confidence the request goes to the fallback agent instead of being executed.",
+          "fallback_agent": "Leave empty to answer 'I can't handle that locally' instead.",
+          "use_ha_intents": "Exact, instant matching of Assist's own sentences before Needle runs."
         }
       }
     },
@@ -19,8 +27,16 @@
       "init": {
         "title": "Whistle Assist options",
         "data": {
-          "language": "Whistle language (used to override automatic language selection)",
-          "confidence_threshold": "Minimum Needle confidence to execute actions without confirmation (0–1)"
+          "language": "Speech language",
+          "confidence_threshold": "Minimum Needle confidence for local execution",
+          "use_ha_intents": "Try Home Assistant's built-in sentences first",
+          "fallback_agent": "Fallback conversation agent (e.g. Claude or OpenAI) for everything Needle cannot handle",
+          "preload_models": "Download and load the models at startup"
+        },
+        "data_description": {
+          "confidence_threshold": "Below this confidence the request goes to the fallback agent instead of being executed.",
+          "fallback_agent": "Leave empty to answer 'I can't handle that locally' instead.",
+          "use_ha_intents": "Exact, instant matching of Assist's own sentences before Needle runs."
         }
       }
     }

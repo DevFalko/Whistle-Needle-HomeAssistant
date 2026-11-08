@@ -1,0 +1,44 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Whistle Assist",
+        "description": "Lokale Spracherkennung (Whistle) und Gerätesteuerung (Needle). Was Needle nicht kann, wird an einen anderen Gesprächsagenten weitergereicht.",
+        "data": {
+          "language": "Sprache",
+          "confidence_threshold": "Mindest-Sicherheit von Needle für lokale Ausführung",
+          "use_ha_intents": "Zuerst die eingebauten Home-Assistant-Sätze probieren",
+          "fallback_agent": "Fallback-Agent (z. B. Claude oder OpenAI) für alles, was Needle nicht kann",
+          "preload_models": "Modelle beim Start herunterladen und laden"
+        },
+        "data_description": {
+          "confidence_threshold": "Darunter geht die Anfrage an den Fallback-Agenten statt ausgeführt zu werden.",
+          "fallback_agent": "Leer lassen, dann antwortet die Integration 'Das kann ich lokal nicht erledigen'.",
+          "use_ha_intents": "Exakter, sofortiger Abgleich mit den Assist-Sätzen, bevor Needle läuft."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Whistle Assist ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Whistle Assist Optionen",
+        "data": {
+          "language": "Sprache",
+          "confidence_threshold": "Mindest-Sicherheit von Needle für lokale Ausführung",
+          "use_ha_intents": "Zuerst die eingebauten Home-Assistant-Sätze probieren",
+          "fallback_agent": "Fallback-Agent (z. B. Claude oder OpenAI) für alles, was Needle nicht kann",
+          "preload_models": "Modelle beim Start herunterladen und laden"
+        },
+        "data_description": {
+          "confidence_threshold": "Darunter geht die Anfrage an den Fallback-Agenten statt ausgeführt zu werden.",
+          "fallback_agent": "Leer lassen, dann antwortet die Integration 'Das kann ich lokal nicht erledigen'.",
+          "use_ha_intents": "Exakter, sofortiger Abgleich mit den Assist-Sätzen, bevor Needle läuft."
+        }
+      }
+    }
+  }
+}
