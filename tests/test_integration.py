@@ -51,12 +51,12 @@ async def _setup(hass: HomeAssistant, **options: Any) -> MockConfigEntry:
     assert await async_setup_component(hass, "conversation", {})
     data = {
         CONF_LANGUAGE: "de",
-        CONF_CONFIDENCE_THRESHOLD: 0.7,
+        CONF_CONFIDENCE_THRESHOLD: 0.1,
         CONF_USE_HA_INTENTS: False,
         CONF_FALLBACK_AGENT: "",
         CONF_PRELOAD: False,
     } | options
-    entry = MockConfigEntry(domain=DOMAIN, data=data, unique_id=DOMAIN)
+    entry = MockConfigEntry(domain=DOMAIN, data=data, unique_id=DOMAIN, version=2)
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -157,7 +157,7 @@ async def test_brightness(hass: HomeAssistant, fake_needle) -> None:
     [
         ("Suche im Internet nach den aktuellen Nachrichten", {"function_calls": [], "confidence": 0.9}),
         ("Mach die Kaffeemaschine an", {"function_calls": [{"name": "control_device", "arguments": {"action": "on", "device": "Kaffeemaschine"}}], "confidence": 0.9}),
-        ("Licht im Wohnzimmer an", {"function_calls": [{"name": "control_device", "arguments": {"action": "on", "device": "Licht", "area": "Wohnzimmer"}}], "confidence": 0.3}),
+        ("Licht im Wohnzimmer an", {"function_calls": [{"name": "control_device", "arguments": {"action": "on", "device": "Licht", "area": "Wohnzimmer"}}], "confidence": 0.05}),
     ],
     ids=["no_tool", "unknown_device", "low_confidence"],
 )
@@ -201,3 +201,68 @@ async def test_ha_intents_run_first(hass: HomeAssistant, fake_needle) -> None:
     # HA's intent handler passes entity_id as a list.
     assert [c.data["entity_id"] for c in calls] == [["light.wohnzimmer_decke"]]
     assert fake_needle.instances == []  # Needle was not needed
+
+
+async def test_question_never_switches(hass: HomeAssistant, fake_needle) -> None:
+    """Needle once answered "Ist das Licht im Flur an?" with control_device(on)."""
+    await _setup(hass)
+    _light(hass, "light.flur", "Flur", "Flur")
+    calls = async_mock_service(hass, "light", "turn_on")
+    fake_needle.replies["Ist das Licht im Flur an?"] = {
+        "function_calls": [{"name": "control_device", "arguments": {"action": "on", "device": "Licht", "area": "Flur"}}],
+        "confidence": 0.3,
+    }
+    result = await _ask(hass, "Ist das Licht im Flur an?")
+    assert calls == []
+    assert result.response.speech["plain"]["speech"] == "Das kann ich lokal nicht erledigen."
+
+
+async def test_room_from_sentence_and_temperature(hass: HomeAssistant, fake_needle) -> None:
+    await _setup(hass)
+    area = ar.async_get(hass).async_get_or_create("Schlafzimmer")
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get_or_create("sensor", "test", "sz_temp", suggested_object_id="schlafzimmer_temperatur",
+                                        original_name="Schlafzimmer Temperatur")
+    ent_reg.async_update_entity(entry.entity_id, area_id=area.id)
+    hass.states.async_set(entry.entity_id, "19.5", {"friendly_name": "Schlafzimmer Temperatur",
+                                                    "device_class": "temperature", "unit_of_measurement": "°C"})
+    async_expose_entity(hass, "conversation", entry.entity_id, True)
+    _light(hass, "light.schlafzimmer", "Schlafzimmer", "Schlafzimmer")
+    fake_needle.replies["Wie warm ist es im Schlafzimmer?"] = {
+        "function_calls": [{"name": "get_state", "arguments": {"device": "Schlafzimmer"}}],
+        "confidence": 0.13,
+    }
+    result = await _ask(hass, "Wie warm ist es im Schlafzimmer?")
+    assert result.response.speech["plain"]["speech"] == "Schlafzimmer Temperatur: 19.5 °C."
+
+
+async def test_cover_direction_from_sentence(hass: HomeAssistant, fake_needle) -> None:
+    await _setup(hass)
+    area = ar.async_get(hass).async_get_or_create("Schlafzimmer")
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get_or_create("cover", "test", "sz_rollo", suggested_object_id="schlafzimmer_rollo",
+                                        original_name="Schlafzimmer Rollo")
+    ent_reg.async_update_entity(entry.entity_id, area_id=area.id)
+    hass.states.async_set(entry.entity_id, "open", {"friendly_name": "Schlafzimmer Rollo"})
+    async_expose_entity(hass, "conversation", entry.entity_id, True)
+    calls = async_mock_service(hass, "cover", "close_cover")
+    fake_needle.replies["Mach das Rollo im Schlafzimmer zu"] = {
+        "function_calls": [{"name": "control_device", "arguments": {"action": "on", "device": "Rollo", "area": "Schlafzimmer"}}],
+        "confidence": 0.2,
+    }
+    await _ask(hass, "Mach das Rollo im Schlafzimmer zu")
+    assert [c.data["entity_id"] for c in calls] == ["cover.schlafzimmer_rollo"]
+
+
+async def test_migration_lowers_old_default_threshold(hass: HomeAssistant) -> None:
+    assert await async_setup_component(hass, "homeassistant", {})
+    assert await async_setup_component(hass, "conversation", {})
+    entry = MockConfigEntry(
+        domain=DOMAIN, version=1, unique_id=DOMAIN,
+        data={CONF_LANGUAGE: "auto", CONF_CONFIDENCE_THRESHOLD: 0.7, CONF_PRELOAD: False},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.version == 2
+    assert entry.data[CONF_CONFIDENCE_THRESHOLD] == 0.10

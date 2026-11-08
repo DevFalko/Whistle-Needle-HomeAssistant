@@ -45,8 +45,8 @@ def main() -> int:
         fail("manifest domain does not match its folder")
     if not re.fullmatch(r"\d+\.\d+\.\d+", manifest["version"]):
         fail("manifest version must use numeric semantic versioning (x.y.z)")
-    if "cactus-needle==3.2.8" not in manifest["requirements"]:
-        fail("manifest must pin cactus-needle==3.2.8 exactly")
+    if not any(re.fullmatch(r"cactus-compute==\d+\.\d+\.\d+", r) for r in manifest["requirements"]):
+        fail("manifest must pin cactus-compute to an exact version")
     if not manifest["codeowners"] or any(
         not isinstance(item, str)
         or not re.fullmatch(r"@[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", item)
@@ -106,11 +106,11 @@ def main() -> int:
     if "Copyright [yyyy]" in license_text or "[name of copyright owner]" in license_text:
         fail("LICENSE contains an unfilled copyright template")
     notice = (ROOT / "NOTICE").read_text(encoding="utf-8")
-    if "cactus-needle==3.2.8" not in notice or "cactus-compute/needle" not in notice:
+    if "cactus-compute==" not in notice or "cactus-compute/cactus" not in notice:
         fail("NOTICE must identify and link the upstream Needle dependency")
 
     print("Repository contract checks passed.")
-    print(f"Checked manifest v{manifest['version']}, pinned Needle 3.2.8, HACS metadata, brand icon, licenses, and {len(python_files)} Python files.")
+    print(f"Checked manifest v{manifest['version']}, pinned Cactus runtime, HACS metadata, brand icon, licenses, and {len(python_files)} Python files.")
     return 0
 
 

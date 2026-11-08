@@ -11,7 +11,8 @@ CONF_USE_HA_INTENTS: Final = "use_ha_intents"
 CONF_PRELOAD: Final = "preload_models"
 
 DEFAULT_LANGUAGE: Final = "auto"
-DEFAULT_CONFIDENCE_THRESHOLD: Final = 0.70
+# Needle's confidence on correct German device commands is often 0.15-0.35.
+DEFAULT_CONFIDENCE_THRESHOLD: Final = 0.10
 DEFAULT_USE_HA_INTENTS: Final = True
 DEFAULT_PRELOAD: Final = True
 NO_FALLBACK: Final = ""

@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import os
 
-# Needle enables anonymous usage telemetry by default. Respect either explicit
-# operator setting; if neither is set, opt out by default for Home Assistant.
-if "NEEDLE_TELEMETRY" not in os.environ and "DO_NOT_TRACK" not in os.environ:
+# The Cactus runtime enables anonymous usage telemetry by default. Respect an
+# explicit operator setting; if there is none, opt out for Home Assistant.
+_TELEMETRY_VARS = ("CACTUS_TELEMETRY", "NEEDLE_TELEMETRY", "DO_NOT_TRACK")
+if not any(var in os.environ for var in _TELEMETRY_VARS):
+    os.environ["CACTUS_TELEMETRY"] = "0"
     os.environ["NEEDLE_TELEMETRY"] = "0"
     os.environ["DO_NOT_TRACK"] = "1"
 
@@ -16,7 +18,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .agent import WhistleAssistManager
-from .const import DOMAIN
+from .const import CONF_CONFIDENCE_THRESHOLD, DEFAULT_CONFIDENCE_THRESHOLD, DOMAIN
 
 PLATFORMS: list[Platform] = [Platform.CONVERSATION, Platform.STT]
 
@@ -29,6 +31,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     if manager.preload:
         entry.async_create_background_task(hass, manager.async_preload(), "whistle_assist_preload")
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v1 -> v2: the old default threshold 0.70 sent almost every German command away."""
+    if entry.version == 1:
+        def fix(values: dict) -> dict:
+            values = dict(values)
+            if float(values.get(CONF_CONFIDENCE_THRESHOLD, 0.7)) == 0.7:
+                values[CONF_CONFIDENCE_THRESHOLD] = DEFAULT_CONFIDENCE_THRESHOLD
+            return values
+
+        hass.config_entries.async_update_entry(
+            entry, data=fix(entry.data), options=fix(entry.options) if entry.options else {}, version=2
+        )
     return True
 
 

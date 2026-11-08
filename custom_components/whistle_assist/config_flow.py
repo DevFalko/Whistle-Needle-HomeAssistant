@@ -86,7 +86,7 @@ def _clean(user_input: dict[str, Any]) -> dict[str, Any]:
 class WhistleAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Set up Whistle Assist."""
 
-    VERSION = 1
+    VERSION = 2
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         if self._async_current_entries():

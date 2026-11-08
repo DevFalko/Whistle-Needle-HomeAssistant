@@ -33,10 +33,19 @@ from .const import (
     NO_FALLBACK,
     READABLE_DOMAINS,
 )
-from .matcher import Candidate, MatchResult, match_area, resolve
+from .matcher import (
+    Candidate,
+    MatchResult,
+    best_area,
+    infer_action,
+    infer_measure,
+    is_question,
+    resolve,
+)
 from .tools import SYSTEM_PROMPT, build_tools
 
 _LOGGER = logging.getLogger(__name__)
+MEASURE_CLASSES = {"temperature": "temperature", "humidity": "humidity", "power": "power", "battery": "battery"}
 EXPOSED_ASSISTANT = "conversation"
 MAX_KEYWORD_CHARS = 2000
 
@@ -194,7 +203,10 @@ class WhistleAssistManager:
                     area_id = area_id or device.area_id
             area = area_reg.async_get_area(area_id) if area_id else None
             result.append(
-                Candidate(state.entity_id, domain, list(dict.fromkeys(names)), area.name if area else None)
+                Candidate(
+                    state.entity_id, domain, list(dict.fromkeys(names)), area.name if area else None,
+                    state.attributes.get("device_class"),
+                )
             )
         return result
 
@@ -221,9 +233,7 @@ class WhistleAssistManager:
         signature = json.dumps(tools, sort_keys=True)
         if self._agent is None or signature != self._signature:
             def create() -> Any:
-                import needle
-
-                return needle.Needle(tools=tools, system=SYSTEM_PROMPT, stateless=True)
+                return _engine().Needle(tools=tools, system=SYSTEM_PROMPT, stateless=True)
 
             self._agent = await self.hass.async_add_executor_job(create)
             self._signature = signature
@@ -268,7 +278,7 @@ class WhistleAssistManager:
         speech: list[str] = []
         for call in calls:
             try:
-                speech.append(await self._execute(call, cands, texts, context))
+                speech.append(await self._execute(call, cands, texts, context, text))
             except Unresolved as err:
                 _LOGGER.debug("Could not resolve %s: %s", call, err)
                 if not speech:
@@ -280,7 +290,7 @@ class WhistleAssistManager:
 
     # ---------------------------------------------------------------- execution
     async def _execute(self, call: dict[str, Any], cands: list[Candidate], texts: dict[str, Any],
-                       context: Context) -> str:
+                       context: Context, text: str = "") -> str:
         name = call.get("name")
         args = call.get("arguments") or {}
         if isinstance(args, str):
@@ -288,20 +298,31 @@ class WhistleAssistManager:
                 args = json.loads(args)
             except json.JSONDecodeError as err:
                 raise Unresolved("arguments") from err
-        area = match_area(args.get("area"), self.areas(cands))
+        # Needle sometimes drops or shortens the room ("Nachtlicht in der Küche"
+        # -> scene "Nachtlicht"); the user's own sentence fills the gap.
+        area = best_area(args.get("area"), text, self.areas(cands))
+
+        if name != "get_state" and is_question(text):
+            # "Ist das Licht an?" must never switch the light on.
+            raise Unresolved("question routed to a mutating tool")
 
         if name == "control_device":
             action = args.get("action")
+            stated = infer_action(text)
+            if stated and stated != action:
+                # The sentence says "zu"/"aus" explicitly; Needle sometimes
+                # answers "on" or "stop" for those.
+                action = stated
             domains = {"cover"} if action in ("open", "close") else set(CONTROLLABLE_DOMAINS)
             match = self._resolve(args.get("device"), area, cands, domains)
             return await self._control(match, action, texts, context)
         if name == "set_level":
             return await self._set_level(args, area, cands, texts, context)
         if name == "get_state":
-            match = self._resolve(args.get("device"), area, cands, None)
-            return self._describe_state(match, texts)
+            args = {**args, "measure": args.get("measure") or infer_measure(text) or "state"}
+            return self._get_state(args, area, cands, texts)
         if name == "activate_scene":
-            match = self._resolve(args.get("scene"), None, cands, {"scene"})
+            match = self._resolve(args.get("scene"), area, cands, {"scene"})
             ent = match.entities[0]
             await self._call("scene", "turn_on", ent.entity_id, {}, context)
             return texts["scene"].format(name=ent.names[0])
@@ -363,7 +384,15 @@ class WhistleAssistManager:
         }.get(str(setting))
         if domains is None:
             raise Unresolved(f"setting {setting!r}")
-        match = self._resolve(args.get("device"), area, cands, domains)
+        try:
+            match = self._resolve(args.get("device"), area, cands, domains)
+        except Unresolved:
+            # "Heizung im Wohnzimmer auf 21 Grad" often arrives as device="Wohnzimmer":
+            # the setting already fixes the device class, so use all of them in the room.
+            group = [c for c in cands if area and c.area == area and c.domain in domains]
+            if not group:
+                raise
+            match = MatchResult(group, 1.0, group=True)
         shown = int(value) if value.is_integer() else value
         for ent in match.entities:
             state = self.hass.states.get(ent.entity_id)
@@ -416,6 +445,47 @@ class WhistleAssistManager:
         for ent in match.entities:
             await self._call("media_player", service, ent.entity_id, data, context)
         return texts[action].format(name=self._label(match))
+
+    def _get_state(self, args: dict[str, Any], area: str | None, cands: list[Candidate],
+                   texts: dict[str, Any]) -> str:
+        measure = args.get("measure") or "state"
+        device = args.get("device")
+        if measure == "state":
+            return self._describe_state(self._resolve(device, area, cands, None), texts)
+        if measure not in MEASURE_CLASSES:
+            raise Unresolved(f"measure {measure!r}")
+        pool = [
+            c for c in cands
+            if (c.domain == "sensor" and c.device_class == MEASURE_CLASSES[measure])
+            or (c.domain == "climate" and measure in ("temperature", "humidity"))
+        ]
+        match = None
+        if device:
+            match = resolve(str(device), area, pool, threshold=MATCH_THRESHOLD)
+        if match is None:
+            group = [c for c in pool if area and c.area == area]
+            # Prefer real sensors over a thermostat's own reading.
+            sensors = [c for c in group if c.domain == "sensor"] or group
+            if not sensors:
+                raise Unresolved(f"no {measure} in {area!r}")
+            match = MatchResult(sensors, 1.0, group=True)
+        parts = []
+        for ent in match.entities:
+            state = self.hass.states.get(ent.entity_id)
+            if state is None:
+                continue
+            if ent.domain == "climate":
+                attr = "current_temperature" if measure == "temperature" else "current_humidity"
+                value = state.attributes.get(attr)
+                unit = "°C" if measure == "temperature" else "%"
+            else:
+                value, unit = state.state, state.attributes.get("unit_of_measurement", "")
+            if value in (None, "unknown", "unavailable"):
+                continue
+            parts.append(texts["state"].format(name=ent.names[0], state=f"{value} {unit}".strip()))
+        if not parts:
+            raise Unresolved("no readable value")
+        return " ".join(parts)
 
     def _describe_state(self, match: MatchResult, texts: dict[str, Any]) -> str:
         if match.group and len(match.entities) > 1:
@@ -470,11 +540,18 @@ def _format_state(state: State, texts: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------- Whistle
+def _engine() -> Any:
+    """The Cactus runtime: `cactus` (cactus-compute 4.x), else legacy `needle`."""
+    try:
+        import cactus
+    except ImportError:
+        import needle as cactus  # cactus-needle 3.x, engine downloads were withdrawn
+    return cactus
+
+
 def _warm_whistle() -> None:
     """Fetch the Whistle weights and engine once (runs in the executor)."""
-    import needle
-
-    needle.transcribe(array.array("f", [0.0] * 1600))
+    _engine().transcribe(array.array("f", [0.0] * 1600))
 
 
 def pcm16_to_float(audio: bytes, channels: int = 1) -> array.array:
@@ -504,9 +581,7 @@ async def async_transcribe(manager: WhistleAssistManager, audio: bytes, language
     keywords = manager.keywords()
 
     def run() -> Any:
-        import needle
-
-        return needle.transcribe(samples, language=language, keywords=keywords or None)
+        return _engine().transcribe(samples, language=language, keywords=keywords or None)
 
     async with manager.engine_lock:
         result = await manager.hass.async_add_executor_job(run)

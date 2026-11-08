@@ -14,7 +14,7 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/pindapandatv-wq/Whistle-Needle-HomeAssistant/issues",
   "requirements": [
-    "cactus-needle==3.2.8"
+    "cactus-compute==4.1.0"
   ],
   "version": "0.2.0"
 }

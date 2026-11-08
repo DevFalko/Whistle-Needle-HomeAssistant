@@ -110,3 +110,60 @@ def test_area_mismatch_requires_strong_match():
 )
 def test_match_area(spoken, expected):
     assert matcher.match_area(spoken, AREAS) == expected
+
+
+AREAS_REAL = ["Badezimmer", "Büro", "Flur", "Flur oben", "Küche", "Schlafzimmer", "Wohnzimmer"]
+
+
+@pytest.mark.parametrize(
+    ("model_area", "text", "expected"),
+    [
+        (None, "Nachtlicht in der Küche", "Küche"),
+        ("Flur", "Schalte alle Lichter im Flur oben aus", "Flur oben"),
+        ("Büro", "Schalte die Stehlampe im Büro aus", "Büro"),
+        (None, "Aktiviere die Szene Galaxie", None),
+    ],
+)
+def test_best_area(model_area, text, expected):
+    assert matcher.best_area(model_area, text, AREAS_REAL) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Ist das Licht im Flur an?", True),
+        ("ist das licht im flur an", True),
+        ("Wie warm ist es im Schlafzimmer", True),
+        ("Mach das Licht im Wohnzimmer an", False),
+        ("Schalte die Stehlampe aus", False),
+    ],
+)
+def test_is_question(text, expected):
+    assert matcher.is_question(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Mach das Rollo im Schlafzimmer zu", "close"),
+        ("Mach das Büro aus", "off"),
+        ("Mach das Licht im Wohnzimmer an", "on"),
+        ("Mach die Steckdose auf der Terrasse aus", None),  # "auf" + "aus": ambiguous, keep Needle's choice
+        ("Toggle the lamp", None),
+    ],
+)
+def test_infer_action(text, expected):
+    assert matcher.infer_action(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Wie warm ist es im Schlafzimmer?", "temperature"),
+        ("Wie hoch ist die Luftfeuchtigkeit im Bad?", "humidity"),
+        ("Wie viel Strom verbraucht die Waschmaschine?", "power"),
+        ("Ist das Licht an?", None),
+    ],
+)
+def test_infer_measure(text, expected):
+    assert matcher.infer_measure(text) == expected

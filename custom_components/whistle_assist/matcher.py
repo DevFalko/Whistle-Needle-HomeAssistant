@@ -76,6 +76,7 @@ class Candidate:
     domain: str
     names: list[str]
     area: str | None = None
+    device_class: str | None = None
     _token_sets: list[set[str]] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
@@ -141,6 +142,85 @@ def domain_for_word(phrase: str) -> str | None:
     return None
 
 
+def _detect_area(phrase: str, areas) -> tuple[str | None, list[str]]:
+    """Find the room named inside a phrase; prefer the longest ("Flur oben" over "Flur")."""
+    spoken = tokens(phrase)
+    best_area, used = None, []
+    for name in areas:
+        area_toks = tokens(name)
+        hits = [w for w in spoken if any(_similar(w, t) for t in area_toks)]
+        if area_toks and len(hits) >= len(area_toks) and len(area_toks) > len(tokens(best_area or "")):
+            best_area, used = name, hits
+    return best_area, used
+
+
+def find_area_in_text(text: str, areas: list[str]) -> str | None:
+    """The room mentioned anywhere in the user's sentence, if exactly one is."""
+    found, _ = _detect_area(text, areas)
+    return found
+
+
+def best_area(model_area: str | None, text: str, areas: list[str]) -> str | None:
+    """Combine the room Needle picked with the room named in the sentence.
+
+    Needle drops rooms ("Nachtlicht in der Küche" -> scene only) and shortens
+    them ("Flur oben" -> "Flur"); the sentence wins when it names a longer room
+    that contains the model's choice.
+    """
+    picked = match_area(model_area, areas)
+    spoken = find_area_in_text(text, areas)
+    if not picked:
+        return spoken
+    if spoken and spoken != picked and set(tokens(picked)) < set(tokens(spoken)):
+        return spoken
+    return picked
+
+
+_QUESTION_WORDS = {
+    "ist", "sind", "wie", "was", "welche", "welcher", "welches", "wo", "wer", "wann",
+    "laeuft", "brennt", "hat", "gibt",
+    "is", "are", "what", "how", "which", "where", "who", "when", "does", "do",
+}
+
+
+def is_question(text: str) -> bool:
+    """A status question must never switch anything ("Ist das Licht an?")."""
+    words = normalize(text).split()
+    return text.strip().endswith("?") or bool(words and words[0] in _QUESTION_WORDS)
+
+
+_MEASURE_WORDS = {
+    "temperature": {"warm", "waerme", "kalt", "temperatur", "grad", "heiss", "temperature", "hot", "cold", "degrees"},
+    "humidity": {"feucht", "feuchtigkeit", "luftfeuchtigkeit", "luftfeuchte", "humidity", "humid"},
+    "power": {"strom", "verbrauch", "watt", "leistung", "power", "consumption"},
+    "battery": {"akku", "batterie", "battery", "ladestand"},
+}
+
+
+def infer_measure(text: str) -> str | None:
+    """Which quantity a status question asks for, if any."""
+    words = set(normalize(text).split())
+    for measure, keys in _MEASURE_WORDS.items():
+        if words & keys:
+            return measure
+    return None
+
+
+_ACTION_WORDS = {
+    "off": {"aus", "ausschalten", "ausmachen", "abschalten", "off"},
+    "on": {"an", "ein", "einschalten", "anmachen", "anschalten", "on"},
+    "close": {"zu", "schliessen", "schliesse", "runter", "herunter", "close", "down"},
+    "open": {"auf", "oeffnen", "oeffne", "hoch", "rauf", "open", "up"},
+}
+
+
+def infer_action(text: str) -> str | None:
+    """The switching direction stated in the sentence, if exactly one is."""
+    words = set(normalize(text).split())
+    found = [action for action, keys in _ACTION_WORDS.items() if words & keys]
+    return found[0] if len(found) == 1 else None
+
+
 def match_area(spoken: str | None, areas: list[str]) -> str | None:
     """Map a spoken area to one of the known area names."""
     if not spoken:
@@ -171,16 +251,10 @@ def resolve(
     if not area and device:
         # The room may be part of the device phrase ("die Stehlampe im Büro"),
         # possibly misheard ("Wohnzimer").
-        spoken = tokens(device)
-        best_area, used = None, []
-        for name in {c.area for c in pool if c.area}:
-            area_toks = tokens(name)
-            hits = [w for w in spoken if any(_similar(w, t) for t in area_toks)]
-            if area_toks and len(hits) >= len(area_toks) and len(area_toks) > len(tokens(best_area or "")):
-                best_area, used = name, hits
+        best_area, used = _detect_area(device, {c.area for c in pool if c.area})
         if best_area:
             area = best_area
-            rest = [w for w in spoken if w not in used]
+            rest = [w for w in tokens(device) if w not in used]
             # Keep the canonical room words so names like "Flur oben" still compare.
             device = " ".join(rest + tokens(best_area))
     if area:

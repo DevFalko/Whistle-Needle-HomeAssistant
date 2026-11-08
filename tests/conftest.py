@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Shared fixtures: a fake `needle` module so tests never download models."""
+"""Shared fixtures: a fake Cactus runtime so tests never download models."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ def fake_needle(monkeypatch):
     module.transcribe = lambda audio, language=None, keywords=None: {"text": "Licht im Wohnzimmer an", "language": "de"}
     FakeNeedle.replies = {}
     FakeNeedle.instances = []
+    monkeypatch.setitem(sys.modules, "cactus", module)
     monkeypatch.setitem(sys.modules, "needle", module)
     return FakeNeedle
 
