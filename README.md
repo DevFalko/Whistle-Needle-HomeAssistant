@@ -1,6 +1,6 @@
 # Whistle + Needle for Home Assistant (Whistle Assist)
 
-[![Hassfest](https://github.com/pindapandatv-wq/Whistle-Needle-HomeAssistant/actions/workflows/validate.yaml/badge.svg)](https://github.com/pindapandatv-wq/Whistle-Needle-HomeAssistant/actions/workflows/validate.yaml)
+[![Hassfest](https://github.com/DevFalko/Whistle-Needle-HomeAssistant/actions/workflows/validate.yaml/badge.svg)](https://github.com/DevFalko/Whistle-Needle-HomeAssistant/actions/workflows/validate.yaml)
 
 
 ## Fork status (v0.2.0)
@@ -51,7 +51,7 @@ Scripts, locks, alarm panels and buttons are never actuated by Needle. Requests 
 This repository is not automatically included in the HACS default catalog. Once published to GitHub:
 
 1. Open **HACS → Integrations → ⋮ → Custom repositories**.
-2. Add `https://github.com/pindapandatv-wq/Whistle-Needle-HomeAssistant` and choose **Integration**.
+2. Add `https://github.com/DevFalko/Whistle-Needle-HomeAssistant` and choose **Integration**.
 3. Install **Whistle Assist**, then restart Home Assistant.
 
 ### Manual installation
